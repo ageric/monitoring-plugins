@@ -114,6 +114,7 @@ dnl Checks for programs.
 AC_PATH_PROG(PERL,perl)
 AC_PATH_PROG(HOSTNAME,hostname)
 AC_PATH_PROG(BASENAME,basename)
+AC_PATH_PROG(NETSNMPCONFIG,net-snmp-config)
 
 dnl allow them to override the path of perl
 AC_ARG_WITH(perl,
@@ -121,6 +122,12 @@ AC_ARG_WITH(perl,
 	                [sets path to perl executable]),
 			with_perl=$withval,with_perl=$PERL)
 AC_SUBST(PERL, $with_perl)
+
+AC_ARG_WITH(net-snmp-config,
+		ACX_HELP_STRING([--with-net-snmp-config=PATH],
+					[sets path to the net-snmp-config executable]),
+			with_net_snmp_config=$withval,with_net_snmp_config=$NETSNMPCONFIG)
+AC_SUBST(NETSNMPCONFIG, $with_net_snmp_config)
 
 dnl openssl/gnutls
 AC_ARG_WITH(openssl,
@@ -325,6 +332,17 @@ AS_IF([test "x$with_ldap" != "xno"], [
   fi
   LIBS="$_SAVEDLIBS"
 ])
+
+dnl Detect Net-SNMP
+ac_save_CPPFLAGS="$CPPFLAGS"
+CPPFLAGS="$CPPFLAGS `$NETSNMPCONFIG --cflags`"
+AC_CHECK_HEADERS(net-snmp/net-snmp-config.h)
+if test "x$ac_cv_header_net_snmp_net_snmp_config_h" = "xyes"; then
+	SNMPLIBS=`$NETSNMPCONFIG --libs`
+	AC_DEFINE(HAVE_NET_SNMP, 1, [Define to enable support for Net-SNMP])
+fi
+CPPFLAGS=$ac_save_CPPFLAGS
+AC_SUBST(SNMPLIBS)
 
 dnl Check for headers used by check_ide_smart
 case $host in
