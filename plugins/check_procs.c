@@ -85,7 +85,6 @@ enum metric {
 };
 enum metric metric = METRIC_PROCS;
 
-int verbose = 0;
 int uid;
 pid_t ppid;
 int vsz;
@@ -189,8 +188,7 @@ main (int argc, char **argv)
 	}
 	(void) alarm ((unsigned) timeout_interval);
 
-	if (verbose >= 2)
-		printf (_("CMD: %s\n"), PS_COMMAND);
+	mp_debug(2, _("CMD: %s\n"), PS_COMMAND);
 
 	if (input_filename == NULL) {
 		result = cmd_run( PS_COMMAND, &chld_out, &chld_err, 0);
@@ -206,8 +204,7 @@ main (int argc, char **argv)
 	for (j = 1; j < chld_out.lines; j++) {
 		input_line = chld_out.line[j];
 
-		if (verbose >= 3)
-			printf ("%s", input_line);
+		mp_debug(3, "%s", input_line);
 
 		strcpy (procprog, "");
 		xasprintf (&procargs, "%s", "");
@@ -229,8 +226,7 @@ main (int argc, char **argv)
 			/* we need to convert the elapsed time to seconds */
 			procseconds = convert_to_seconds(procetime);
 
-			if (verbose >= 3)
-				printf ("proc#=%d uid=%d vsz=%d rss=%d pid=%d ppid=%d pcpu=%.2f stat=%s etime=%s prog=%s args=%s\n", 
+			mp_debug(3, "proc#=%d uid=%d vsz=%d rss=%d pid=%d ppid=%d pcpu=%.2f stat=%s etime=%s prog=%s args=%s\n",
 					procs, procuid, procvsz, procrss,
 					procpid, procppid, procpcpu, procstat, 
 					procetime, procprog, procargs);
@@ -238,15 +234,14 @@ main (int argc, char **argv)
 			/* Ignore self */
 			if ((usepid && mypid == procpid) ||
 				(!usepid && ((ret = stat_exe(procpid, &statbuf) != -1) && statbuf.st_dev == mydev && statbuf.st_ino == myino) ||
-				 (ret == -1 && errno == ENOENT))) {
-				if (verbose >= 3)
-					 printf("not considering - is myself or gone\n");
+				 (ret == -1 && errno == ENOENT)))
+			{
+				mp_debug(3, "not considering - is myself or gone\n");
 				continue;
 			}
 			/* Ignore parent*/
 			else if (myppid == procpid) {
-				if (verbose >= 3)
-					 printf("not considering - is parent\n");
+				mp_debug(3, "not considering - is parent\n");
 				continue;
 			}
 
@@ -259,8 +254,7 @@ main (int argc, char **argv)
 					kthread_ppid = procpid;
 
 				if (kthread_ppid == procppid) {
-					if (verbose >= 2)
-						printf ("Ignore kernel thread: pid=%d ppid=%d prog=%s args=%s\n", procpid, procppid, procprog, procargs);
+					mp_debug(3, "Ignore kernel thread: pid=%d ppid=%d prog=%s args=%s\n", procpid, procppid, procprog, procargs);
 					continue;
 				}
 			}
@@ -291,12 +285,10 @@ main (int argc, char **argv)
 				continue;
 
 			procs++;
-			if (verbose >= 2) {
-				printf ("Matched: uid=%d vsz=%d rss=%d pid=%d ppid=%d pcpu=%.2f stat=%s etime=%s prog=%s args=%s\n", 
+			mp_debug(2, "Matched: uid=%d vsz=%d rss=%d pid=%d ppid=%d pcpu=%.2f stat=%s etime=%s prog=%s args=%s\n",
 					procuid, procvsz, procrss,
 					procpid, procppid, procpcpu, procstat, 
 					procetime, procprog, procargs);
-			}
 
 			if (metric == METRIC_VSZ)
 				i = get_status ((double)procvsz, procs_thresholds);
@@ -320,10 +312,10 @@ main (int argc, char **argv)
 					result = max_state (result, i);
 				}
 			}
-		} 
+		}
 		/* This should not happen */
-		else if (verbose) {
-			printf(_("Not parseable: %s"), input_buffer);
+		else {
+			mp_debug(1, _("Not parseable: %s"), input_buffer);
 		}
 	}
 
@@ -359,8 +351,8 @@ main (int argc, char **argv)
 		printf (_(" with %s"), fmt);
 	}
 
-	if ( verbose >= 1 && strcmp(fails,"") )
-		printf (" [%s]", fails);
+	if (strcmp(fails, ""))
+		mp_debug(1, " [%s]", fails);
 
 	if (metric == METRIC_PROCS)
 		printf (" | procs=%d;%s;%s;0;", procs,
@@ -565,7 +557,7 @@ process_arguments (int argc, char **argv)
 			kthread_filter = 1;
 			break;
 		case 'v':									/* command */
-			verbose++;
+			mp_verbosity++;
 			break;
 		case 'T':
 			usepid = 1;
@@ -676,9 +668,8 @@ convert_to_seconds(char *etime) {
 		(minutes * 60) +
 		seconds;
 
-	if (verbose >= 3 && metric == METRIC_ELAPSED) {
-			printf("seconds: %d\n", total);
-	}
+	if (metric == METRIC_ELAPSED)
+		mp_debug(3, "seconds: %d\n", total);
 	return total;
 }
 

@@ -41,6 +41,22 @@ unsigned int timeout_interval = DEFAULT_SOCKET_TIMEOUT;
 
 time_t start_time, end_time;
 
+/* debug utils. if lvl >= mp_verbosity, we print */
+int mp_verbosity = 0;
+void mp_debug(int lvl, const char *fmt, ...)
+{
+	va_list ap;
+
+	if (mp_verbosity < lvl)
+		return;
+
+	va_start(ap, fmt);
+	vprintf(fmt, ap);
+	/* make sure we get all output regardless of buffering */
+	fflush(stdout);
+	va_end(ap);
+}
+
 /* **************************************************************************
  * max_state(STATE_x, STATE_y)
  * compares STATE_x to  STATE_y and returns result based on the following

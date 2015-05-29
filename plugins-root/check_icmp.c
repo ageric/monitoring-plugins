@@ -204,7 +204,7 @@ extern char **environ;
 /** global variables **/
 static struct rta_host **table, *cursor, *list;
 static threshold crit = {80, 500000}, warn = {40, 200000};
-static int mode, protocols, sockets, debug = 0, timeout = 10;
+static int mode, protocols, sockets, timeout = 10;
 static unsigned short icmp_data_size = DEFAULT_PING_DATA_SIZE;
 static unsigned short icmp_pkt_size = DEFAULT_PING_DATA_SIZE + ICMP_MINLEN;
 
@@ -248,7 +248,7 @@ get_icmp_error_msg(unsigned char icmp_type, unsigned char icmp_code)
 {
 	const char *msg = "unreachable";
 
-	if(debug > 1) printf("get_icmp_error_msg(%u, %u)\n", icmp_type, icmp_code);
+	mp_debug(2, "get_icmp_error_msg(%u, %u)\n", icmp_type, icmp_code);
 	switch(icmp_type) {
 	case ICMP_UNREACH:
 		switch(icmp_code) {
@@ -311,7 +311,7 @@ handle_random_icmp(unsigned char *packet, struct sockaddr_in *addr)
 		return 0;
 	}
 
-	if(debug) printf("handle_random_icmp(%p, %p)\n", (void *)&p, (void *)addr);
+	mp_debug(1, "handle_random_icmp(%p, %p)\n", (void *)&p, (void *)addr);
 
 	/* only handle a few types, since others can't possibly be replies to
 	 * us in a sane network (if it is anyway, it will be counted as lost
@@ -335,17 +335,15 @@ handle_random_icmp(unsigned char *packet, struct sockaddr_in *addr)
 	if(sent_icmp.icmp_type != ICMP_ECHO || ntohs(sent_icmp.icmp_id) != pid ||
 	   ntohs(sent_icmp.icmp_seq) >= targets*packets)
 	{
-		if(debug) printf("Packet is no response to a packet we sent\n");
+		mp_debug(1, "Packet is no response to a packet we sent\n");
 		return 0;
 	}
 
 	/* it is indeed a response for us */
 	host = table[ntohs(sent_icmp.icmp_seq)/packets];
-	if(debug) {
-		printf("Received \"%s\" from %s for ICMP ECHO sent to %s.\n",
-			   get_icmp_error_msg(p.icmp_type, p.icmp_code),
-			   inet_ntoa(addr->sin_addr), host->name);
-	}
+	mp_debug(1, "Received \"%s\" from %s for ICMP ECHO sent to %s.\n",
+	         get_icmp_error_msg(p.icmp_type, p.icmp_code),
+	         inet_ntoa(addr->sin_addr), host->name);
 
 	icmp_lost++;
 	host->icmp_lost++;
@@ -407,7 +405,7 @@ main(int argc, char **argv)
 
 #ifdef SO_TIMESTAMP
 	if(setsockopt(icmp_sock, SOL_SOCKET, SO_TIMESTAMP, &on, sizeof(on)))
-	  if(debug) printf("Warning: no SO_TIMESTAMP support\n");
+		mp_debug(1, "Warning: no SO_TIMESTAMP support\n");
 #endif // SO_TIMESTAMP
 
 	/* POSIXLY_CORRECT might break things, so unset it (the portable way) */
@@ -473,7 +471,7 @@ main(int argc, char **argv)
 			unsigned short size;
 			switch(arg) {
 			case 'v':
-				debug++;
+				mp_verbosity++;
 				break;
 			case 'b':
 				size = (unsigned short)strtol(optarg,NULL,0);
@@ -566,11 +564,13 @@ main(int argc, char **argv)
 
 	if(icmp_sock) {
 		result = setsockopt(icmp_sock, SOL_IP, IP_TTL, &ttl, sizeof(ttl));
-		if(debug) {
-			if(result == -1) printf("setsockopt failed\n");
-			else printf("ttl set to %u\n", ttl);
+		if (result < 0) {
+			mp_debug(1, "setsockopt failed: %s\n", strerror(errno));
+		} else {
+			mp_debug(1, "ttl set to %u\n", ttl);
 		}
 	}
+
 
 	/* stupid users should be able to give whatever thresholds they want
 	 * (nothing will break if they do), but some anal plugin maintainer
@@ -584,7 +584,7 @@ main(int argc, char **argv)
 	signal(SIGHUP, finish);
 	signal(SIGTERM, finish);
 	signal(SIGALRM, finish);
-	if(debug) printf("Setting alarm timeout to %u seconds\n", timeout);
+	mp_debug(1, "Setting alarm timeout to %u seconds\n", timeout);
 	alarm(timeout);
 
 	/* make sure we don't wait any longer than necessary */
@@ -593,34 +593,28 @@ main(int argc, char **argv)
 		((targets * packets * pkt_interval) + (targets * target_interval)) +
 		(targets * packets * crit.rta) + crit.rta;
 
-	if(debug) {
-		printf("packets: %u, targets: %u\n"
-			   "target_interval: %0.3f, pkt_interval %0.3f\n"
-			   "crit.rta: %0.3f\n"
-			   "max_completion_time: %0.3f\n",
-			   packets, targets,
-			   (float)target_interval / 1000, (float)pkt_interval / 1000,
-			   (float)crit.rta / 1000,
-			   (float)max_completion_time / 1000);
+	mp_debug(1, "packets: %u, targets: %u\n"
+	         "target_interval: %0.3f, pkt_interval %0.3f\n"
+	         "crit.rta: %0.3f\n"
+	         "max_completion_time: %0.3f\n",
+	         packets, targets,
+	        (float)target_interval / 1000, (float)pkt_interval / 1000,
+	        (float)crit.rta / 1000,
+	        (float)max_completion_time / 1000);
+
+	if(max_completion_time > (u_int)timeout * 1000000) {
+		mp_debug(1, "max_completion_time: %llu  timeout: %u\n",
+		         max_completion_time, timeout);
+		mp_debug(1, "Timout must be at lest %llu\n",
+		         max_completion_time / 1000000 + 1);
 	}
 
-	if(debug) {
-		if(max_completion_time > (u_int)timeout * 1000000) {
-			printf("max_completion_time: %llu  timeout: %u\n",
-				   max_completion_time, timeout);
-			printf("Timout must be at lest %llu\n",
-				   max_completion_time / 1000000 + 1);
-		}
-	}
-
-	if(debug) {
-		printf("crit = {%u, %u%%}, warn = {%u, %u%%}\n",
-			   crit.rta, crit.pl, warn.rta, warn.pl);
-		printf("pkt_interval: %u  target_interval: %u  retry_interval: %u\n",
-			   pkt_interval, target_interval, retry_interval);
-		printf("icmp_pkt_size: %u  timeout: %u\n",
-			   icmp_pkt_size, timeout);
-	}
+	mp_debug(1, "crit = {%u, %u%%}, warn = {%u, %u%%}\n",
+	         crit.rta, crit.pl, warn.rta, warn.pl);
+	mp_debug(1, "pkt_interval: %u  target_interval: %u  retry_interval: %u\n",
+	         pkt_interval, target_interval, retry_interval);
+	mp_debug(1, "icmp_pkt_size: %u  timeout: %u\n",
+	         icmp_pkt_size, timeout);
 
 	if(packets > 20) {
 		errno = 0;
@@ -664,8 +658,8 @@ run_checks()
 			/* don't send useless packets */
 			if(!targets_alive) finish(0);
 			if(table[t]->flags & FLAG_LOST_CAUSE) {
-				if(debug) printf("%s is a lost cause. not sending any more\n",
-								 table[t]->name);
+				mp_debug(1, "%s is a lost cause. not sending any more\n",
+				         table[t]->name);
 				continue;
 			}
 
@@ -680,19 +674,17 @@ run_checks()
 		time_passed = get_timevaldiff(NULL, NULL);
 		final_wait = max_completion_time - time_passed;
 
-		if(debug) {
-			printf("time_passed: %u  final_wait: %u  max_completion_time: %llu\n",
-				   time_passed, final_wait, max_completion_time);
-		}
+		mp_debug(1, "time_passed: %u  final_wait: %u  max_completion_time: %llu\n",
+		         time_passed, final_wait, max_completion_time);
 		if(time_passed > max_completion_time) {
-			if(debug) printf("Time passed. Finishing up\n");
+			mp_debug(1, "Time passed. Finishing up\n");
 			finish(0);
 		}
 
 		/* catch the packets that might come in within the timeframe, but
 		 * haven't yet */
-		if(debug) printf("Waiting for %u micro-seconds (%0.3f msecs)\n",
-						 final_wait, (float)final_wait / 1000);
+		mp_debug(1, "Waiting for %u micro-seconds (%0.3f msecs)\n",
+		         final_wait, (float)final_wait / 1000);
 		result = wait_for_reply(icmp_sock, final_wait);
 	}
 }
@@ -737,20 +729,18 @@ wait_for_reply(int sock, u_int t)
 		n = recvfrom_wto(sock, buf, sizeof(buf),
 						 (struct sockaddr *)&resp_addr, &t, &now);
 		if(!n) {
-			if(debug > 1) {
-				printf("recvfrom_wto() timed out during a %u usecs wait\n",
-					   per_pkt_wait);
-			}
+			mp_debug(2, "recvfrom_wto() timed out during a %u usecs wait\n",
+			         per_pkt_wait);
 			continue;	/* timeout for this one, so keep trying */
 		}
 		if(n < 0) {
-			if(debug) printf("recvfrom_wto() returned errors\n");
+			mp_debug(1, "recvfrom_wto() returned errors\n");
 			return n;
 		}
 
 		ip = (struct ip *)buf;
-		if(debug > 1) printf("received %u bytes from %s\n",
-						 ntohs(ip->ip_len), inet_ntoa(resp_addr.sin_addr));
+		mp_debug(2, "received %u bytes from %s\n",
+		         ntohs(ip->ip_len), inet_ntoa(resp_addr.sin_addr));
 
 /* obsolete. alpha on tru64 provides the necessary defines, but isn't broken */
 /* #if defined( __alpha__ ) && __STDC__ && !defined( __GLIBC__ ) */
@@ -766,28 +756,22 @@ wait_for_reply(int sock, u_int t)
 			crash("received packet too short for ICMP (%d bytes, expected %d) from %s\n",
 				  n, hlen + icmp_pkt_size, inet_ntoa(resp_addr.sin_addr));
 		}
-		/* else if(debug) { */
-		/* 	printf("ip header size: %u, packet size: %u (expected %u, %u)\n", */
-		/* 		   hlen, ntohs(ip->ip_len) - hlen, */
-		/* 		   sizeof(struct ip), icmp_pkt_size); */
-		/* } */
 
 		/* check the response */
 		memcpy(&icp, buf + hlen, sizeof(icp));
 
 		if(ntohs(icp.icmp_id) != pid || icp.icmp_type != ICMP_ECHOREPLY ||
 		   ntohs(icp.icmp_seq) >= targets*packets) {
-			if(debug > 2) printf("not a proper ICMP_ECHOREPLY\n");
+			mp_debug(3, "not a proper ICMP_ECHOREPLY\n");
 			handle_random_icmp(buf + hlen, &resp_addr);
 			continue;
 		}
 
 		/* this is indeed a valid response */
 		memcpy(&data, icp.icmp_data, sizeof(data));
-		if (debug > 2)
-			printf("ICMP echo-reply of len %lu, id %u, seq %u, cksum 0x%X\n",
-			       (unsigned long)sizeof(data), ntohs(icp.icmp_id),
-			       ntohs(icp.icmp_seq), icp.icmp_cksum);
+		mp_debug(3, "ICMP echo-reply of len %lu, id %u, seq %u, cksum 0x%X\n",
+		         (unsigned long)sizeof(data), ntohs(icp.icmp_id),
+		         ntohs(icp.icmp_seq), icp.icmp_cksum);
 
 		host = table[ntohs(icp.icmp_seq)/packets];
 		tdiff = get_timevaldiff(&data.stime, &now);
@@ -800,11 +784,9 @@ wait_for_reply(int sock, u_int t)
 		if (tdiff < host->rtmin)
 			host->rtmin = tdiff;
 
-		if(debug) {
-			printf("%0.3f ms rtt from %s, outgoing ttl: %u, incoming ttl: %u, max: %0.3f, min: %0.3f\n",
-				   (float)tdiff / 1000, inet_ntoa(resp_addr.sin_addr),
-				   ttl, ip->ip_ttl, (float)host->rtmax / 1000, (float)host->rtmin / 1000);
-		}
+		mp_debug(1, "%0.3f ms rtt from %s, outgoing ttl: %u, incoming ttl: %u, max: %0.3f, min: %0.3f\n",
+		         (float)tdiff / 1000, inet_ntoa(resp_addr.sin_addr),
+		         ttl, ip->ip_ttl, (float)host->rtmax / 1000, (float)host->rtmin / 1000);
 
 		/* if we're in hostcheck mode, exit with limited printouts */
 		if(mode == MODE_HOSTCHECK) {
@@ -864,11 +846,10 @@ send_icmp_ping(int sock, struct rta_host *host)
 	packet.icp->icmp_seq = htons(host->id++);
 	packet.icp->icmp_cksum = icmp_checksum(packet.cksum_in, icmp_pkt_size);
 
-	if (debug > 2)
-		printf("Sending ICMP echo-request of len %lu, id %u, seq %u, cksum 0x%X to host %s\n",
-		       (unsigned long)sizeof(data), ntohs(packet.icp->icmp_id),
-		       ntohs(packet.icp->icmp_seq), packet.icp->icmp_cksum,
-		       host->name);
+	mp_debug(3, "Sending ICMP echo-request of len %lu, id %u, seq %u, cksum 0x%X to host %s\n",
+	         (unsigned long)sizeof(data), ntohs(packet.icp->icmp_id),
+	         ntohs(packet.icp->icmp_seq), packet.icp->icmp_cksum,
+	         host->name);
 
 	memset(&iov, 0, sizeof(iov));
 	iov.iov_base = packet.buf;
@@ -888,8 +869,8 @@ send_icmp_ping(int sock, struct rta_host *host)
 #endif
 
 	if(len < 0 || (unsigned int)len != icmp_pkt_size) {
-		if(debug) printf("Failed to send ping to %s\n",
-						 inet_ntoa(host->saddr_in.sin_addr));
+		mp_debug(1, "Failed to send ping to %s\n",
+		         inet_ntoa(host->saddr_in.sin_addr));
 		return -1;
 	}
 
@@ -915,7 +896,7 @@ recvfrom_wto(int sock, void *buf, unsigned int len, struct sockaddr *saddr,
 #endif
 
 	if(!*timo) {
-		if(debug) printf("*timo is not\n");
+		mp_debug(1, "*timo is not\n");
 		return 0;
 	}
 
@@ -977,17 +958,15 @@ finish(int sig)
 	int hosts_warn = 0;
 
 	alarm(0);
-	if(debug > 1) printf("finish(%d) called\n", sig);
+	mp_debug(2, "finish(%d) called\n", sig);
 
 	if(icmp_sock != -1) close(icmp_sock);
 	if(udp_sock != -1) close(udp_sock);
 	if(tcp_sock != -1) close(tcp_sock);
 
-	if(debug) {
-		printf("icmp_sent: %u  icmp_recv: %u  icmp_lost: %u\n",
-			   icmp_sent, icmp_recv, icmp_lost);
-		printf("targets: %u  targets_alive: %u\n", targets, targets_alive);
-	}
+	mp_debug(1, "icmp_sent: %u  icmp_recv: %u  icmp_lost: %u\n",
+	         icmp_sent, icmp_recv, icmp_lost);
+	mp_debug(1, "targets: %u  targets_alive: %u\n", targets, targets_alive);
 
 	/* iterate thrice to calculate values, give output, and print perfparse */
 	host = list;
@@ -1030,7 +1009,7 @@ finish(int sig)
 
 	host = list;
 	while(host) {
-		if(debug) puts("");
+		mp_debug(1, "\n");
 		if(i) {
 			if(i < targets) printf(" :: ");
 			else printf("\n");
@@ -1062,7 +1041,7 @@ finish(int sig)
 	i = 0;
 	host = list;
 	while(host) {
-		if(debug) puts("");
+		mp_debug(1, "\n");
 		printf("%srta=%0.3fms;%0.3f;%0.3f;0; %spl=%u%%;%u;%u;; %srtmax=%0.3fms;;;; %srtmin=%0.3fms;;;; ",
 			   (targets > 1) ? host->name : "",
 			   host->rta / 1000, (float)warn.rta / 1000, (float)crit.rta / 1000,
@@ -1080,8 +1059,8 @@ finish(int sig)
 
 	/* finish with an empty line */
 	puts("");
-	if(debug) printf("targets: %u, targets_alive: %u, hosts_ok: %u, hosts_warn: %u, min_hosts_alive: %i\n",
-					 targets, targets_alive, hosts_ok, hosts_warn, min_hosts_alive);
+	mp_debug(1, "targets: %u, targets_alive: %u, hosts_ok: %u, hosts_warn: %u, min_hosts_alive: %i\n",
+	         targets, targets_alive, hosts_ok, hosts_warn, min_hosts_alive);
 
 	exit(status);
 }
@@ -1124,7 +1103,7 @@ add_target_ip(char *arg, struct in_addr *in)
 	host = list;
 	while(host) {
 		if(host->saddr_in.sin_addr.s_addr == in->s_addr) {
-			if(debug) printf("Identical IP already exists. Not adding %s\n", arg);
+			mp_debug(1, "Identical IP already exists. Not adding %s\n", arg);
 			return -1;
 		}
 		host = host->next;
@@ -1188,7 +1167,7 @@ add_target(char *arg)
 
 		/* this is silly, but it works */
 		if(mode == MODE_HOSTCHECK || mode == MODE_ALL) {
-			if(debug > 2) printf("mode: %d\n", mode);
+			mp_debug(3, "mode: %d\n", mode);
 			continue;
 		}
 		break;
@@ -1255,12 +1234,12 @@ get_timevar(const char *str)
 	if(len >= 2 && !isdigit((int)str[len - 2])) p = str[len - 2];
 	if(p && u == 's') u = p;
 	else if(!p) p = u;
-	if(debug > 2) printf("evaluating %s, u: %c, p: %c\n", str, u, p);
+	mp_debug(3, "evaluating %s, u: %c, p: %c\n", str, u, p);
 
 	if(u == 'u') factor = 1;            /* microseconds */
 	else if(u == 'm') factor = 1000;	/* milliseconds */
 	else if(u == 's') factor = 1000000;	/* seconds */
-	if(debug > 2) printf("factor is %u\n", factor);
+	mp_debug(3, "factor is %u\n", factor);
 
 	i = strtoul(str, &ptr, 0);
 	if(!ptr || *ptr != '.' || strlen(ptr) < 2 || factor == 1)

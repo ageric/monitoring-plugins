@@ -30,7 +30,7 @@
 const char *progname = "check_swap";
 const char *copyright = "2000-2007";
 const char *email = "devel@monitoring-plugins.org";
-
+static int verbose;
 #include "common.h"
 #include "popen.h"
 #include "utils.h"
@@ -61,7 +61,6 @@ int warn_percent = 0;
 int crit_percent = 0;
 float warn_size_bytes = 0;
 float crit_size_bytes = 0;
-int verbose;
 int allswaps;
 int no_swap_state = STATE_CRITICAL;
 
@@ -111,9 +110,7 @@ main (int argc, char **argv)
 		usage4 (_("Could not parse arguments"));
 
 #ifdef HAVE_PROC_MEMINFO
-	if (verbose >= 3) {
-		printf("Reading PROC_MEMINFO at %s\n", PROC_MEMINFO);
-	}
+	mp_debug(3, "Reading PROC_MEMINFO at %s\n", PROC_MEMINFO);
 	fp = fopen (PROC_MEMINFO, "r");
 	while (fgets (input_buffer, MAX_INPUT_BUFFER - 1, fp)) {
 		if (sscanf (input_buffer, "%*[S]%*[w]%*[a]%*[p]%*[:] %f %f %f", &dsktotal_mb, &dskused_mb, &dskfree_mb) == 3) {
@@ -129,14 +126,12 @@ main (int argc, char **argv)
 				else
 					percent = 100 * (((double) dskused_mb) / ((double) dsktotal_mb));
 				result = max_state (result, check_swap (percent, dskfree_mb));
-				if (verbose)
+				if (mp_verbosity)
 					xasprintf (&status, "%s [%.0f (%d%%)]", status, dskfree_mb, 100 - percent);
 			}
 		}
 		else if (sscanf (input_buffer, "%*[S]%*[w]%*[a]%*[p]%[TotalFre]%*[:] %f %*[k]%*[B]", str, &tmp_mb)) {
-			if (verbose >= 3) {
-				printf("Got %s with %f\n", str, tmp_mb);
-			}
+			mp_debug(3, "Got %s with %f\n", str, tmp_mb);
 			/* I think this part is always in Kb, so convert to mb */
 			if (strcmp ("Total", str) == 0) {
 				dsktotal_mb = tmp_mb / 1024;
@@ -166,10 +161,8 @@ main (int argc, char **argv)
 	}
 #  endif
 
-	if (verbose >= 2)
-		printf (_("Command: %s\n"), swap_command);
-	if (verbose >= 3)
-		printf (_("Format: %s\n"), swap_format);
+	mp_debug(3, _("Command: %s\n"), swap_command);
+	mp_debug(3, _("Format: %s\n"), swap_format);
 
 	child_process = spopen (swap_command);
 	if (child_process == NULL) {
@@ -204,8 +197,7 @@ main (int argc, char **argv)
 		sscanf (input_buffer, swap_format, &total_swap_mb, &used_swap_mb);
 		free_swap_mb = total_swap_mb * (100 - used_swap_mb) /100;
 		used_swap_mb = total_swap_mb - free_swap_mb;
-		if (verbose >= 3)
-			printf (_("total=%.0f, used=%.0f, free=%.0f\n"), total_swap_mb, used_swap_mb, free_swap_mb);
+		mp_debug(3, _("total=%.0f, used=%.0f, free=%.0f\n"), total_swap_mb, used_swap_mb, free_swap_mb);
 	} else {
 #  endif
 		while (fgets (input_buffer, MAX_INPUT_BUFFER - 1, child_process)) {
@@ -218,8 +210,7 @@ main (int argc, char **argv)
 #  else
 			dskfree_mb = dskfree_mb / conv_factor;
 #  endif
-			if (verbose >= 3)
-				printf (_("total=%.0f, free=%.0f\n"), dsktotal_mb, dskfree_mb);
+			mp_debug(3, _("total=%.0f, free=%.0f\n"), dsktotal_mb, dskfree_mb);
 
 			dskused_mb = dsktotal_mb - dskfree_mb;
 			total_swap_mb += dsktotal_mb;
@@ -228,7 +219,7 @@ main (int argc, char **argv)
 			if (allswaps) {
 				percent = 100 * (((double) dskused_mb) / ((double) dsktotal_mb));
 				result = max_state (result, check_swap (percent, dskfree_mb));
-				if (verbose)
+				if (mp_verbosity)
 					xasprintf (&status, "%s [%.0f (%d%%)]", status, dskfree_mb, 100 - percent);
 			}
 		}
@@ -256,8 +247,7 @@ main (int argc, char **argv)
 	if(nswaps == 0)
 		die(STATE_OK, _("SWAP OK: No swap devices defined\n"));
 
-	if(verbose >= 3)
-		printf("Found %d swap device(s)\n", nswaps);
+	mp_debug(3, "Found %d swap device(s)\n", nswaps);
 
 	/* initialize swap table + entries */
 	tbl=(swaptbl_t*)malloc(sizeof(swaptbl_t)+(sizeof(swapent_t)*nswaps));
@@ -284,13 +274,12 @@ main (int argc, char **argv)
 		dskfree_mb = (float) tbl->swt_ent[i].ste_free /  SWAP_CONVERSION;
 		dskused_mb = ( dsktotal_mb - dskfree_mb );
 
-		if (verbose >= 3)
-			printf ("dsktotal_mb=%.0f dskfree_mb=%.0f dskused_mb=%.0f\n", dsktotal_mb, dskfree_mb, dskused_mb);
+		mp_debug(3, "dsktotal_mb=%.0f dskfree_mb=%.0f dskused_mb=%.0f\n", dsktotal_mb, dskfree_mb, dskused_mb);
 
 		if(allswaps && dsktotal_mb > 0){
 			percent = 100 * (((double) dskused_mb) / ((double) dsktotal_mb));
 			result = max_state (result, check_swap (percent, dskfree_mb));
-			if (verbose) {
+			if (mp_verbosity) {
 				xasprintf (&status, "%s [%.0f (%d%%)]", status, dskfree_mb, 100 - percent);
 			}
 		}
@@ -329,7 +318,7 @@ main (int argc, char **argv)
 		if(allswaps && dsktotal_mb > 0){
 			percent = 100 * (((double) dskused_mb) / ((double) dsktotal_mb));
 			result = max_state (result, check_swap (percent, dskfree_mb));
-			if (verbose) {
+			if (mp_verbosity) {
 				xasprintf (&status, "%s [%.0f (%d%%)]", status, dskfree_mb, 100 - percent);
 			}
 		}
@@ -466,7 +455,7 @@ process_arguments (int argc, char **argv)
 				usage4 (_("no-swap result must be a valid state name (OK, WARNING, CRITICAL, UNKNOWN) or integer (0-3)."));
 			}
 		case 'v':									/* verbose */
-			verbose++;
+			mp_verbosity++;
 			break;
 		case 'V':									/* version */
 			print_revision (progname, NP_VERSION);

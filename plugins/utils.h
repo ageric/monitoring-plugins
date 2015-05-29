@@ -38,6 +38,10 @@ RETSIGTYPE timeout_alarm_handler (int);
 
 extern time_t start_time, end_time;
 
+/** debug utils */
+extern int mp_verbosity;
+void mp_debug(int lvl, const char *, ...) __attribute__((format(printf, 2, 3)));
+
 /* Test input types */
 
 int is_integer (char *);
