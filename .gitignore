@@ -181,6 +181,7 @@ NP-VERSION-FILE
 /plugins/check_simap
 /plugins/check_smtp
 /plugins/check_snmp
+/plugins/check_snmp_procs
 /plugins/check_spop
 /plugins/check_ssh
 /plugins/check_ssmtp

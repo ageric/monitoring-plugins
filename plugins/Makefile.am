@@ -29,7 +29,7 @@ MATHLIBS = @MATHLIBS@
 libexec_PROGRAMS = check_apt check_cluster check_disk check_dummy check_http check_load \
 	check_mrtg check_mrtgtraf check_ntp check_ntp_peer check_nwstat check_overcr check_ping \
 	check_real check_smtp check_ssh check_tcp check_time check_ntp_time \
-	check_ups check_users negate \
+	check_snmp_procs check_ups check_users negate \
 	urlize @EXTRAS@
 
 check_tcp_programs = check_ftp check_imap check_nntp check_pop \
@@ -53,6 +53,7 @@ BASEOBJS = libnpcommon.a ../lib/libmonitoringplug.a ../gl/libgnu.a
 NETOBJS = $(BASEOBJS) $(EXTRA_NETOBLS)
 NETLIBS = $(NETOBJS) $(SOCKETLIBS)
 SSLOBJS = $(BASEOBJS) $(NETLIBS) $(SSLLIBS)
+SNMPOBJS = $(BASEOBJS) $(SNMPLIBS)
 
 TESTS_ENVIRONMENT = perl -I $(top_builddir) -I $(top_srcdir)
 
@@ -89,7 +90,7 @@ check_mysql_query_CFLAGS = $(AM_CFLAGS) $(MYSQLCFLAGS)
 check_mysql_query_CPPFLAGS = $(AM_CPPFLAGS) $(MYSQLINCLUDE)
 check_mysql_query_LDADD = $(NETLIBS) $(MYSQLLIBS)
 check_nagios_LDADD = $(BASEOBJS)
-check_nt_LDADD = $(NETLIBS) 
+check_nt_LDADD = $(NETLIBS)
 check_ntp_LDADD = $(NETLIBS) $(MATHLIBS)
 check_ntp_peer_LDADD = $(NETLIBS) $(MATHLIBS)
 check_nwstat_LDADD = $(NETLIBS)
@@ -100,6 +101,7 @@ check_procs_LDADD = $(BASEOBJS)
 check_radius_LDADD = $(NETLIBS) $(RADIUSLIBS)
 check_real_LDADD = $(NETLIBS)
 check_snmp_LDADD = $(BASEOBJS)
+check_snmp_procs_LDADD = $(SNMPOBJS)
 check_smtp_LDADD = $(SSLOBJS)
 check_ssh_LDADD = $(NETLIBS)
 check_swap_LDADD = $(MATHLIBS) $(BASEOBJS)
