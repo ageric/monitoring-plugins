@@ -1,10 +1,17 @@
 /**
  * Check system load over snmp
  */
+
+const char *progname = "check_snmp_procs";
+const char *program_name = "check_snmp_procs";
+const char *copyright = "2015";
+const char *email = "devel@monitoring-plugins.org";
+
+#include "config.h"
 #include "common.h"
 #include "utils.h"
 #include "utils_snmp.h"
-//#include "bitmap.h"
+#include "bitmap.h"
 
 #define PROCESS_TABLE "1.3.6.1.2.1.25.4.2.1"
 #define PROCESS_SUBIDX_RunIndex 1
@@ -59,10 +66,28 @@ static const char *pstate2str(enum process_state pstate)
 
 static int procs;
 
+static int walker_print_name(netsnmp_variable_list *v, void *discard_, void *discard)
+{
+	int c;
+	procs++;
+	if (!v->val.string || v->val_len <= 0 || !*v->val.string)
+		return 0;
+	c = v->val.string[v->val_len];
+	v->val.string[v->val_len] = 0;
+	printf("%s\n", v->val.string);
+	v->val.string[v->val_len] = c;
+	return 0;
+}
+
+static int check_proc_names(mp_snmp_context *c)
+{
+	mp_snmp_walk(c, PROCESS_TABLE ".4", walker_print_name, NULL, NULL);
+}
+
 static int pstate_callback(netsnmp_variable_list *v, void *psc_ptr, void *discard)
 {
-	procs++;
 	struct process_state_count *psc = (struct process_state_count *)psc_ptr;
+	procs++;
 
 	switch (*v->val.integer) {
 		case PROC_STATE_RUNNING:
@@ -78,6 +103,7 @@ static int pstate_callback(netsnmp_variable_list *v, void *psc_ptr, void *discar
 			psc->invalid++;
 			break;
 	}
+	return 0;
 }
 
 static int check_proc_states(mp_snmp_context *ss, int statemask)
@@ -89,24 +115,6 @@ static int check_proc_states(mp_snmp_context *ss, int statemask)
 	mp_snmp_walk(ss, PROCESS_TABLE ".7", pstate_callback, &pstate_count, NULL);
 	printf("Processes: running=%d, runnable=%d, not runnable=%d, invalid=%d\n",
 	      pstate_count.running, pstate_count.runnable, pstate_count.notrunnable, pstate_count.invalid);
-}
-
-static int walker_print_name(netsnmp_variable_list *v, void *discard_, void *discard)
-{
-	int c;
-	if (!v->val.string || v->val_len <= 0 || !*v->val.string)
-		return 0;
-	c = v->val.string[v->val_len];
-	v->val.string[v->val_len] = 0;
-	printf("%s\n", v->val.string);
-	v->val.string[v->val_len] = c;
-	procs++;
-	return 0;
-}
-
-static int check_proc_names(mp_snmp_context *c)
-{
-	mp_snmp_walk(c, PROCESS_TABLE ".4", walker_print_name, NULL, NULL);
 }
 
 static struct proc_info *query_process(mp_snmp_context *ctx, int k)
@@ -206,9 +214,11 @@ int main(int argc, char **argv)
 	netsnmp_session session, *ss;
 	mp_snmp_context *ctx;
 	struct proc_info *p;
+	int filter = 0;
 	char *optary;
 	char *warn_str = NULL, *crit_str = NULL;
-	char *state_str;
+	char *state_str = NULL;
+	bitmap *bm;
 
 	static struct option longopts[] = {
 		{"timeout", required_argument, 0, 't'},
@@ -216,11 +226,17 @@ int main(int argc, char **argv)
 		{"critical", required_argument, 0, 'c'},
 		{"state", required_argument, 0, 's'},
 		{"host", required_argument, 0, 'H'},
+		{"metric", required_argument, 0, 'm'},
+		{"command", required_argument, 0, 'O'},
+		{"vsz", required_argument, 0, 'z'},
+		{"ereg-argument-array", required_argument, 0, CHAR_MAX+1},
+		{"input-file", required_argument, 0, CHAR_MAX+2},
+		{"elapsed", required_argument, 0, 'e'},
 		MP_SNMP_LONGOPTS,
 		{NULL, 0, 0, 0},
 	};
 
-	optary = calloc(3, ARRAY_SIZE(longopts));
+	optary = calloc(1, 3 + (3 * ARRAY_SIZE(longopts)));
 	i = 0;
 	optary[i++] = '+';
 	optary[i++] = '?';
@@ -229,13 +245,11 @@ int main(int argc, char **argv)
 		if (o->val >= CHAR_MAX || o->val <= 0) {
 			continue;
 		}
-#if 0
 		if (bitmap_isset(bm, o->val)) {
-			printf("###############################\n##### DOUBLE OPTION YOU DOOFUS!\n#########################\n");
+			printf("###\n### %c is a double option, doofus!\n###\n", c);
 			exit(1);
 		}
 		bitmap_set(bm, o->val);
-#endif
 		if (o->val < CHAR_MAX)
 			optary[i++] = o->val;
 		if (o->has_arg)
@@ -244,6 +258,7 @@ int main(int argc, char **argv)
 			optary[i++] = ':';
 	}
 
+	bitmap_destroy(bm);
 	printf("optary: %s\n", optary);
 	mp_snmp_init("check_snmp_procs", 0);
 	ctx = mp_snmp_create_context();
@@ -253,9 +268,8 @@ int main(int argc, char **argv)
 		if (c < 0 || c == EOF)
 			break;
 
-		if (!mp_snmp_handle_argument(ctx, c, optarg)) {
+		if (!mp_snmp_handle_argument(ctx, c, optarg))
 			continue;
-		}
 
 		switch (c) {
 		case 'c':
@@ -266,18 +280,20 @@ int main(int argc, char **argv)
 			break;
 		case 's':
 			state_str = optarg;
+			break;
 		}
 	}
 	free(optary);
 
 	set_thresholds(&thresh, warn_str, crit_str);
-
 	mp_snmp_finalize_auth(ctx);
+
 	if (1) {
 		p = query_process(ctx, 1);
 		print_proc_info(p);
 		destroy_proc_info(p);
 	}
+	procs = 0;
 	if (1) {
 		check_proc_names(ctx);
 		printf("procs: %d\n", procs);
