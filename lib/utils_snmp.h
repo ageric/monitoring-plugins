@@ -27,6 +27,18 @@
 /** for mp_snmp_init(). Set this to enable logging */
 #define MP_SNMP_ENABLE_LOGS (1 << 2)
 
+#define MP_SNMP_LONGOPTS \
+	{"community", required_argument, 0, 'C'}, \
+	{"version", required_argument, 0, 'v'},   \
+	{"retries", required_argument, 0, 'r'},   \
+	{"seclevel", required_argument, 0, 'L'},  \
+	{"secname", required_argument, 0, 'U'},   \
+	{"authprot", required_argument, 0, 'a'},  \
+	{"authpass", required_argument, 0, 'A'},  \
+	{"privprot", required_argument, 0, 'P'},  \
+	{"privpass", required_argument, 0, 'X'}
+
+
 /** used to add entries to the 'mask' option for mp_snmp_pdu_add_subentries */
 #define MP_SNMP_PDU_MASK_ADD(mask, x) (mask |= (1 << (x - 1)))
 
@@ -36,6 +48,13 @@ typedef struct mp_snmp_context mp_snmp_context;
 
 /** the third argument to mp_snmp_walk */
 typedef int (*mp_snmp_walker)(netsnmp_variable_list *, void *, void *);
+
+
+int mp_snmp_finalize_auth(mp_snmp_context *c);
+mp_snmp_context *mp_snmp_create_context(void);
+void mp_snmp_destroy_context(mp_snmp_context *ctx);
+int mp_snmp_handle_argument(mp_snmp_context *ctx, int option, const char *opt);
+int mp_snmp_is_valid_var(netsnmp_variable_list *v);
 
 /**
  * Convert an oid to a string
@@ -76,7 +95,7 @@ char *mp_snmp_value2str(netsnmp_variable_list *v, char *buf, size_t len);
  * @param arg2 Second pointer passed to callback function
  * @return 0 on success. -1 on parameter errors
  */
-int mp_snmp_walk(netsnmp_session *ss, const char *base_oid,
+int mp_snmp_walk(mp_snmp_context *ctx, const char *base_oid,
 	mp_snmp_walker func, void *arg, void *arg2);
 
 /**

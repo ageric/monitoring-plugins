@@ -12,8 +12,189 @@
 /* opaque structure. Modify as needed */
 struct mp_snmp_context {
 	char *name;
+	char *auth_pass;
+	char *priv_pass;
+	int error;
 	netsnmp_session session;
 };
+
+int mp_snmp_is_valid_var(netsnmp_variable_list *v)
+{
+	if (!v || !v->name || !v->name_length)
+		return 0;
+	if (!v->name || !v->name_length)
+		return 0;
+	switch (v->type) {
+	case SNMP_ENDOFMIBVIEW: case SNMP_NOSUCHOBJECT: case SNMP_NOSUCHINSTANCE:
+		return 0;
+	case ASN_NULL:
+		return 0;
+	}
+	return 1;
+}
+
+int mp_snmp_query(mp_snmp_context *ctx, netsnmp_pdu *pdu, netsnmp_pdu **response)
+{
+	netsnmp_session *ss;
+	int ret;
+
+	if (!(ss = snmp_open(&ctx->session))) {
+		snmp_sess_perror("snmp_open", &ctx->session);
+		return -1;
+	}
+	ret = snmp_synch_response(ss, pdu, response);
+	snmp_close(ss);
+
+	return ret;
+}
+
+mp_snmp_context *mp_snmp_create_context(void)
+{
+	mp_snmp_context *c;
+	c = calloc(1, sizeof(struct mp_snmp_context));
+	if (!c)
+		return NULL;
+
+	snmp_sess_init(&c->session);
+	/* set some defaults */
+	c->session.version = SNMP_VERSION_2c;
+	c->session.timeout = 15 * 100000;
+	c->session.community = (u_char *)"public";
+	c->session.community_len = (size_t)strlen((char *)c->session.community);
+	return c;
+}
+
+static void _parse_key(netsnmp_session *ss, char *pass, u_char *key, size_t *len)
+{
+	if (*pass == '0' && pass[1] == 'x') {
+		if (!snmp_hex_to_binary((u_char **)&pass, len, (size_t *)key, 0, pass)) {
+			die(STATE_UNKNOWN, _("Can't convert string to hex: %s\n"), pass);
+		}
+	} else {
+		if (generate_Ku(ss->securityAuthProto,
+						ss->securityAuthProtoLen,
+						(u_char *)pass, strlen(pass),
+						key, len) != SNMPERR_SUCCESS)
+		{
+			die(STATE_UNKNOWN, _("Error generating Ku from password '%s'\n"), pass);
+		}
+	}
+}
+
+int mp_snmp_finalize_auth(mp_snmp_context *c)
+{
+	if (c->auth_pass || c->priv_pass || c->session.securityName
+	    || c->session.securityPrivProtoLen || c->session.securityAuthProtoLen
+	    || c->session.securityLevel)
+	{
+		c->session.version = SNMP_VERSION_3;
+	}
+	if (c->auth_pass) {
+		c->session.securityAuthKeyLen = sizeof(c->session.securityAuthKey);
+		_parse_key(&c->session, c->auth_pass, c->session.securityAuthKey, &c->session.securityAuthKeyLen);
+	}
+	if (c->priv_pass) {
+		c->session.securityPrivKeyLen = sizeof(c->session.securityPrivKey);
+		if (c->session.securityPrivProto == NULL) {
+#ifndef NETSNMP_DISABLE_DES
+			c->session.securityPrivProto = snmp_duplicate_objid(usmDESPrivProtocol, USM_PRIV_PROTO_DES_LEN);
+			c->session.securityPrivProtoLen = USM_PRIV_PROTO_DES_LEN;
+#else
+			c->session.securityPrivProto = snmp_duplicate_objid(usmAESPrivProtocol, USM_PRIV_PROTO_AES_LEN);
+			c->session.securityPrivProtoLen = USM_PRIV_PROTO_AES_LEN;
+#endif
+		}
+		_parse_key(&c->session, c->priv_pass, c->session.securityPrivKey, &c->session.securityPrivKeyLen);
+	}
+
+	return 0;
+}
+
+void mp_snmp_destroy_context(struct mp_snmp_context *c)
+{
+	free(c->name);
+	free(c->auth_pass);
+	free(c->priv_pass);
+	free(c);
+}
+
+int mp_snmp_handle_argument(mp_snmp_context *ctx, int option, const char *opt)
+{
+	char *str;
+
+	printf("%c: %s\n", option, opt);
+	switch (option) {
+	case 'H':
+		ctx->session.peername = (u_char *)opt;
+		break;
+	case 't':
+		ctx->session.timeout = atoi(opt) * 1000000;
+		break;
+	case 'r':
+		ctx->session.retries = atoi(opt);
+		break;
+	case 'C':
+		ctx->session.community = (u_char *)opt;
+		ctx->session.community_len = strlen(opt);
+		break;
+	case 'v':
+		if (*opt == '1')
+			ctx->session.version = SNMP_VERSION_1;
+		else if (*opt == '2')
+			ctx->session.version = SNMP_VERSION_2c;
+		else if (*opt == '3')
+			ctx->session.version = SNMP_VERSION_3;
+		else {
+			printf("Unparsable snmp version: %s\n", opt);
+			exit(STATE_UNKNOWN);
+		}
+		break;
+		/* SNMP v3 crap goes here */
+	case 'L':
+		str = strdup(opt);
+		ctx->session.securityLevel = parse_secLevel_conf("ignored", str);
+		if (ctx->session.securityLevel < 0) {
+			die(STATE_UNKNOWN, _("Invalid argument for secLevel: %s\n"), opt);
+			exit(STATE_UNKNOWN);
+		}
+		break;
+	case 'U':
+		ctx->session.securityName = strdup(opt);
+		ctx->session.securityNameLen = strlen(opt);
+		break;
+	case 'a':
+		if (*opt == 'm' || *opt == 'M') {
+			ctx->session.securityAuthProto = usmHMACMD5AuthProtocol;
+			ctx->session.securityAuthProtoLen = USM_AUTH_PROTO_MD5_LEN;
+		} else if (*opt == 's' || *opt == 'S') {
+			ctx->session.securityAuthProto = usmHMACSHA1AuthProtocol;
+			ctx->session.securityAuthProtoLen = USM_AUTH_PROTO_SHA_LEN;
+		} else {
+			die(STATE_UNKNOWN, _("AuthProto must be 'md5' or 'sha1', not '%s'\n"), opt);
+		}
+		break;
+	case 'A':
+		ctx->auth_pass = strdup(opt);
+		break;
+	case 'P':
+		if (*opt == 'd' || *opt == 'D') {
+			ctx->session.securityPrivProto = usmDESPrivProtocol;
+			ctx->session.securityPrivProtoLen = USM_PRIV_PROTO_DES_LEN;
+		} else if (*opt == 'a' || *opt == 'A') {
+			ctx->session.securityPrivProto = usmAESPrivProtocol;
+			ctx->session.securityPrivProtoLen = USM_PRIV_PROTO_AES_LEN;
+		} else {
+			die(STATE_UNKNOWN, _("PrivProto requires 'des' or 'aes' as argument, not '%s'\n"), opt);
+		}
+		break;
+	case 'X':
+		ctx->priv_pass = strdup(opt);
+		break;
+	default:
+		return -1;
+	}
+	return 0;
+}
 
 const char *mp_snmp_oid2str(oid *o, size_t len)
 {
@@ -28,7 +209,7 @@ char *mp_snmp_value2str(netsnmp_variable_list *v, char *buf, size_t len)
 	return buf;
 }
 
-int mp_snmp_walk(netsnmp_session *ss, const char *base_oid, mp_snmp_walker func, void *arg, void *arg2)
+int mp_snmp_walk(mp_snmp_context *ctx, const char *base_oid, mp_snmp_walker func, void *arg, void *arg2)
 {
 	netsnmp_session *s;
 	oid name[MAX_OID_LEN];
@@ -40,7 +221,7 @@ int mp_snmp_walk(netsnmp_session *ss, const char *base_oid, mp_snmp_walker func,
 	int count, running, status = STAT_ERROR, exitval = 0;
 	int result;
 
-	s = snmp_open(ss);
+	s = snmp_open(&ctx->session);
 
 	/*
 	 * get the initial object and subtree
@@ -113,10 +294,7 @@ int mp_snmp_walk(netsnmp_session *ss, const char *base_oid, mp_snmp_walker func,
 				break;
 			}
 
-			if ((v->type == SNMP_ENDOFMIBVIEW) ||
-				(v->type == SNMP_NOSUCHOBJECT) ||
-				(v->type == SNMP_NOSUCHINSTANCE))
-			{
+			if (!mp_snmp_is_valid_var(v)) {
 				running = 0;
 				break;
 			}
@@ -188,23 +366,6 @@ int mp_snmp_add_keyed_subtree(netsnmp_pdu *pdu, const char *base_oid, int mask, 
 		snmp_add_null_var(pdu, o, len);
 	}
 	return 0;
-}
-
-void mp_snmp_parse_key(netsnmp_session *ss, char *arg, char *pass, u_char *key, size_t *len)
-{
-	if (*pass == '0' && pass[1] == 'x') {
-		if (!snmp_hex_to_binary((u_char **)&pass, len, (size_t *)key, 0, pass)) {
-			die(STATE_UNKNOWN, _("Bad key value for %s\n"), arg);
-		}
-	} else {
-		if (generate_Ku(ss->securityAuthProto,
-						ss->securityAuthProtoLen,
-						(u_char *)pass, strlen(pass),
-						key, len) != SNMPERR_SUCCESS)
-		{
-			die(STATE_UNKNOWN, _("Error generating Ku from authentication password '%s'\n"), pass);
-		}
-	}
 }
 
 void mp_snmp_init(const char *name, int flags)
