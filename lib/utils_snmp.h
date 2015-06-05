@@ -87,15 +87,19 @@ char *mp_snmp_value2str(netsnmp_variable_list *v, char *buf, size_t len);
  * found. If the callback function is passed a list, it must only
  * look at the topmost item, as it will be called with the next item
  * directly after.
+ * If end_oid is NULL, we will fetch all of base_oid.* and nothing
+ * more, so a request to walk (base=".1.3.6.1.2.1.25.4", end="NULL")
+ * will stop when we hit the first entry in .1.3.6.1.2.1.25.5.
  *
  * @param context The context for the current session
  * @param base_oid The oid where we should start walking
+ * @param end_oid The oid where we should stop walking.
  * @param func The function to call for each variable found
  * @param arg First pointer passed to callback function
  * @param arg2 Second pointer passed to callback function
  * @return 0 on success. -1 on parameter errors
  */
-int mp_snmp_walk(mp_snmp_context *ctx, const char *base_oid,
+int mp_snmp_walk(mp_snmp_context *ctx, const char *base_oid, const char *end_oid,
 	mp_snmp_walker func, void *arg, void *arg2);
 
 /**

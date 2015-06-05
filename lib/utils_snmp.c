@@ -123,7 +123,6 @@ int mp_snmp_handle_argument(mp_snmp_context *ctx, int option, const char *opt)
 {
 	char *str;
 
-	printf("%c: %s\n", option, opt);
 	switch (option) {
 	case 'H':
 		ctx->session.peername = (u_char *)opt;
@@ -146,8 +145,7 @@ int mp_snmp_handle_argument(mp_snmp_context *ctx, int option, const char *opt)
 		else if (*opt == '3')
 			ctx->session.version = SNMP_VERSION_3;
 		else {
-			printf("Unparsable snmp version: %s\n", opt);
-			exit(STATE_UNKNOWN);
+			die(STATE_UNKNOWN, _("Unparsable snmp version: %s\n"), opt);
 		}
 		break;
 		/* SNMP v3 crap goes here */
@@ -226,14 +224,14 @@ static int mp_snmp_synch_response(mp_snmp_context *ctx, netsnmp_session *ss,
 	return 0;
 }
 
-int mp_snmp_walk(mp_snmp_context *ctx, const char *base_oid, mp_snmp_walker func, void *arg, void *arg2)
+int mp_snmp_walk(mp_snmp_context *ctx, const char *base_oid, const char *end_oid, mp_snmp_walker func, void *arg, void *arg2)
 {
 	netsnmp_session *s;
 	oid name[MAX_OID_LEN];
 	size_t name_length;
 	oid root[MAX_OID_LEN];
-	size_t rootlen;
-	oid end_oid[MAX_OID_LEN];
+	size_t root_len;
+	oid end[MAX_OID_LEN];
 	size_t end_len = 0;
 	int count, running, status = STAT_ERROR, exitval = 0;
 	int result;
@@ -243,42 +241,53 @@ int mp_snmp_walk(mp_snmp_context *ctx, const char *base_oid, mp_snmp_walker func
 	/*
 	 * get the initial object and subtree
 	 */
-	rootlen = MAX_OID_LEN;
-	if (snmp_parse_oid(base_oid, root, &rootlen) == NULL) {
-		printf("UNKNOWN - Failed to add %s as root for snmp traversal: %s\n",
-			   base_oid, snmp_api_errstring(snmp_errno));
-		exit(STATE_UNKNOWN);
+	root_len = MAX_OID_LEN;
+	if (snmp_parse_oid(base_oid, root, &root_len) == NULL) {
+		die(STATE_UNKNOWN, _("Failed to add %s as root for snmpwalk: %s\n"),
+		    base_oid, snmp_api_errstring(snmp_errno));
 	}
 
-	memmove(end_oid, root, rootlen*sizeof(oid));
-	end_len = rootlen;
-	end_oid[end_len-1]++;
+	if (!end_oid) {
+		memmove(end, root, root_len*sizeof(oid));
+		end_len = root_len;
+		end[end_len-1]++;
+	} else {
+		end_len = MAX_OID_LEN;
+		if (snmp_parse_oid(end_oid, end, &end_len) == NULL) {
+			die(STATE_UNKNOWN, _("Failed to add %s as end for snmpwalk: %s\n"),
+			    end_oid, snmp_api_errstring(snmp_errno));
+		}
+	}
 
 	/*
 	 * get first object to start walk
 	 */
-	memmove(name, root, rootlen * sizeof(oid));
-	name_length = rootlen;
+	memmove(name, root, root_len * sizeof(oid));
+	name_length = root_len;
 
 	running = 1;
 	while (running) {
 		netsnmp_variable_list *v;
 		netsnmp_pdu	*pdu, *response = NULL;
-		/*
-		 * create PDU for GETNEXT request and add object name to request
-		 */
-		pdu = snmp_pdu_create(SNMP_MSG_GETNEXT);
+		/* create query pdu. We use GETBULK if not snmp v1 */
+		if (ctx->session.version == SNMP_VERSION_1) {
+			pdu = snmp_pdu_create(SNMP_MSG_GETNEXT);
+		} else {
+			pdu = snmp_pdu_create(SNMP_MSG_GETBULK);
+			pdu->non_repeaters = 0;
+			pdu->max_repetitions = 25;
+		}
 		snmp_add_null_var(pdu, name, name_length);
 
 		/* do the request */
 		status = snmp_synch_response(s, pdu, &response);
 		if (status != STAT_SUCCESS) {
 			if (status == STAT_TIMEOUT) {
-				printf("Timeout: No Response from %s\n", s->peername);
+				die(STATE_UNKNOWN, _("Timeout: No Response from %s\n"), s->peername);
 			}
 			else {
 				/* status == STAT_ERROR */
-				printf("SNMP error when querying %s\n", s->peername);
+				die(STATE_UNKNOWN, _("SNMP error when querying %s\n"), s->peername);
 			}
 			running = 0;
 			exitval = 1;
@@ -305,7 +314,9 @@ int mp_snmp_walk(mp_snmp_context *ctx, const char *base_oid, mp_snmp_walker func
 
 		/* check resulting variables */
 		for (v = response->variables; v; v = v->next_variable) {
-			if (snmp_oid_compare(end_oid, end_len, v->name, v->name_length) <= 0) {
+			if (snmp_oid_compare(end, end_len, v->name, v->name_length) <= 0) {
+				char v_oid[MAX_OID_LEN * 4];
+				snprint_objid(v_oid, sizeof(v_oid) - 1, v->name, v->name_length);
 				/* not part of this subtree */
 				running = 0;
 				break;
@@ -324,7 +335,7 @@ int mp_snmp_walk(mp_snmp_context *ctx, const char *base_oid, mp_snmp_walker func
 			}
 
 			memmove((char *) name, (char *) v->name,
-					v->name_length * sizeof(oid));
+			        v->name_length * sizeof(oid));
 			name_length = v->name_length;
 		}
 		if (response) {
@@ -403,10 +414,11 @@ void mp_snmp_init(const char *name, int flags)
 	if (!(flags & MP_SNMP_LOAD_CONFIG)) {
 		netsnmp_ds_set_boolean(NETSNMP_DS_LIBRARY_ID, NETSNMP_DS_LIB_DISABLE_CONFIG_LOAD, 1);
 	}
+#if 0
 	netsnmp_ds_set_boolean(NETSNMP_DS_LIBRARY_ID, NETSNMP_DS_LIB_PRINT_BARE_VALUE, 1);
 	netsnmp_ds_set_boolean(NETSNMP_DS_LIBRARY_ID, NETSNMP_DS_LIB_QUICKE_PRINT, 1);
 	netsnmp_ds_set_int(NETSNMP_DS_LIBRARY_ID, NETSNMP_DS_LIB_OID_OUTPUT_FORMAT, NETSNMP_OID_OUTPUT_NUMERIC);
-
+#endif
 	init_snmp(name ? name : "mp_snmp");
 }
 
