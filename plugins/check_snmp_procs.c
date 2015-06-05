@@ -81,7 +81,7 @@ static int walker_print_name(netsnmp_variable_list *v, void *discard_, void *dis
 
 static int check_proc_names(mp_snmp_context *c)
 {
-	mp_snmp_walk(c, PROCESS_TABLE ".4", walker_print_name, NULL, NULL);
+	mp_snmp_walk(c, PROCESS_TABLE ".2", walker_print_name, NULL, NULL);
 }
 
 static int pstate_callback(netsnmp_variable_list *v, void *psc_ptr, void *discard)
@@ -199,6 +199,31 @@ static void print_proc_info(struct proc_info *p)
 	printf("Parameters: %s\n", p->Parameters);
 }
 
+static int parse_state_filter(const char *str)
+{
+	int filter = 0;
+	char *p;
+	for (p = str; *p; p++) {
+		switch (*p) {
+		case 'R': /* running */
+			filter |= 1 << PROC_STATE_RUNNING;
+			break;
+		case 'S': /* sleeping (aka, "runnable") */
+			filter |= 1 << PROC_STATE_RUNNABLE;
+			break;
+		case 'D': /* "dormant", uninterruptable sleep */
+			filter |= 1 << PROC_STATE_NOTRUNNABLE;
+		case 'Z': /* zombies */
+			filter |= 1 << PROC_STATE_INVALID;
+		default:
+			return -1;
+		}
+	}
+
+	return filter;
+}
+
+
 static void destroy_proc_info(struct proc_info *p)
 {
 	free(p->Name);
@@ -214,10 +239,12 @@ int main(int argc, char **argv)
 	netsnmp_session session, *ss;
 	mp_snmp_context *ctx;
 	struct proc_info *p;
-	int filter = 0;
 	char *optary;
 	char *warn_str = NULL, *crit_str = NULL;
 	char *state_str = NULL;
+	int state_filter;
+	const char *name_filter;
+	const char *ereg_name_filter;
 	bitmap *bm;
 
 	static struct option longopts[] = {
@@ -281,17 +308,30 @@ int main(int argc, char **argv)
 		case 's':
 			state_str = optarg;
 			break;
+		case 'n':
+			name_filter = optarg;
+			break;
+		case CHAR_MAX + 1:
+			ereg_name_filter = optarg;
+			break;
 		}
 	}
 	free(optary);
 
 	set_thresholds(&thresh, warn_str, crit_str);
 	mp_snmp_finalize_auth(ctx);
+	state_filter = parse_state_filter(state_str);
+	if (state_filter < 0) {
+		die(STATE_UNKNOWN, _("Invalid state filter string: %s\n"), state_str);
+	}
 
-	if (1) {
-		p = query_process(ctx, 1);
-		print_proc_info(p);
-		destroy_proc_info(p);
+	bm = filter_processes(state_filter, name_filter, ereg_name_filter);
+	bm = bitmap_create(65536); /* 8kb. Will grow if pid > 65536 */
+	if (state_filter) {
+		filter_states(ctx, bm, state_filter);
+	}
+	if (name_filter) {
+		filter_names(ctx, bm, name_filter);
 	}
 	procs = 0;
 	if (1) {
