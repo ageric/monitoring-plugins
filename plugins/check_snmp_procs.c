@@ -12,6 +12,7 @@ const char *email = "devel@monitoring-plugins.org";
 #include "utils.h"
 #include "utils_snmp.h"
 #include "bitmap.h"
+#include "rbtree.h"
 
 #define PROCESS_TABLE "1.3.6.1.2.1.25.4.2.1"
 #define PROCESS_SUBIDX_RunIndex 1
@@ -33,6 +34,8 @@ enum process_state {
 	PROC_STATE_INVALID = 4,
 };
 
+struct rbtree *all_procs, *interesting;
+
 struct process_state_count {
 	int running, runnable, notrunnable, invalid;
 };
@@ -51,7 +54,16 @@ struct proc_info {
 		int CPU;
 		int Mem;
 	} Perf;
+	struct proc_info *next;
 };
+
+static int proc_compare(const void *a_, const void *b_)
+{
+	const struct proc_info *a = (struct proc_info *)a_;
+	const struct proc_info *b = (struct proc_info *)b_;
+
+	return a->Index - b->Index;
+}
 
 static const char *pstate2str(enum process_state pstate)
 {
@@ -66,43 +78,27 @@ static const char *pstate2str(enum process_state pstate)
 
 static int procs;
 
-static int walker_print_name(netsnmp_variable_list *v, void *discard_, void *discard)
-{
-	int c;
-	procs++;
-	if (!v->val.string || v->val_len <= 0 || !*v->val.string)
-		return 0;
-	c = v->val.string[v->val_len];
-	v->val.string[v->val_len] = 0;
-	printf("%s\n", v->val.string);
-	v->val.string[v->val_len] = c;
-	return 0;
-}
-
-static int check_proc_names(mp_snmp_context *c)
-{
-	mp_snmp_walk(c, PROCESS_TABLE ".2", walker_print_name, NULL, NULL);
-}
-
 static int pstate_callback(netsnmp_variable_list *v, void *psc_ptr, void *discard)
 {
 	struct process_state_count *psc = (struct process_state_count *)psc_ptr;
+
 	procs++;
 
 	switch (*v->val.integer) {
-		case PROC_STATE_RUNNING:
-			psc->running++;
-			break;
-		case PROC_STATE_RUNNABLE:
-			psc->runnable++;
-			break;
-		case PROC_STATE_NOTRUNNABLE:
-			psc->notrunnable++;
-			break;
-		case PROC_STATE_INVALID:
-			psc->invalid++;
-			break;
+	case PROC_STATE_RUNNING:
+		psc->running++;
+		break;
+	case PROC_STATE_RUNNABLE:
+		psc->runnable++;
+		break;
+	case PROC_STATE_NOTRUNNABLE:
+		psc->notrunnable++;
+		break;
+	case PROC_STATE_INVALID:
+		psc->invalid++;
+		break;
 	}
+
 	return 0;
 }
 
@@ -112,7 +108,7 @@ static int check_proc_states(mp_snmp_context *ss, int statemask)
 	struct process_state_count pstate_count;
 
 	memset(&pstate_count, 0, sizeof(pstate_count));
-	mp_snmp_walk(ss, PROCESS_TABLE ".7", pstate_callback, &pstate_count, NULL);
+	mp_snmp_walk(ss, PROCESS_TABLE ".7", NULL, pstate_callback, &pstate_count, NULL);
 	printf("Processes: running=%d, runnable=%d, not runnable=%d, invalid=%d\n",
 	      pstate_count.running, pstate_count.runnable, pstate_count.notrunnable, pstate_count.invalid);
 }
@@ -184,25 +180,35 @@ static struct proc_info *query_process(mp_snmp_context *ctx, int k)
 				break;
 		}
 	}
-	printf("count: %d\n", count);
+	mp_debug(2, "count: %d\n", count);
 	snmp_free_pdu(response);
 	return p;
 }
 
-static void print_proc_info(struct proc_info *p)
+static int print_proc_info(void *p_, void *discard)
 {
-	printf("CPU: %d\n", p->Perf.CPU);
-	printf("Mem: %d\n", p->Perf.Mem);
-	printf("Name: %s\n", p->Name);
-	printf("Path: %s\n", p->Path);
-	printf("Status: %d\n", p->Status);
-	printf("Parameters: %s\n", p->Parameters);
+	struct proc_info *p = (struct proc_info *)p_;
+
+	printf("################\n");
+	printf("  Index: %d\n", p->Index);
+	printf("  Name: %s\n", p->Name);
+	printf("  Path: %s\n", p->Path);
+	printf("  Status: %s\n", pstate2str(p->Status));
+	printf("  Parameters: %s\n", p->Parameters);
+	printf("  CPU: %d\n", p->Perf.CPU);
+	printf("  Mem: %d\n", p->Perf.Mem);
+
+	return 0;
 }
 
 static int parse_state_filter(const char *str)
 {
 	int filter = 0;
-	char *p;
+	const char *p;
+
+	if (!str || !*str)
+		return 0;
+
 	for (p = str; *p; p++) {
 		switch (*p) {
 		case 'R': /* running */
@@ -224,12 +230,73 @@ static int parse_state_filter(const char *str)
 }
 
 
-static void destroy_proc_info(struct proc_info *p)
+static void destroy_proc_info(void *p_)
 {
+	struct proc_info *p = (struct proc_info *)p;
+	if (!p)
+		return;
 	free(p->Name);
 	free(p->Parameters);
 	free(p->Path);
 	free(p);
+}
+
+static int parse_snmp_var(netsnmp_variable_list *v, void *discard1, void *discard2)
+{
+	struct proc_info *p;
+	int pid;
+
+	pid = v->name[11];
+	if (v->name[7] == 4 && v->name[10] == 1) {
+		/* new process. wohoo */
+		p = calloc(1, sizeof(*p));
+		p->Index = pid;
+		rbtree_insert(all_procs, p);
+		return 0;
+	}
+
+	p = rbtree_find(all_procs, (struct proc_info *)&pid);
+	print_variable(v->name, v->name_length, v);
+	mp_debug(3, "Found proc_info with id %d\n", p->Index);
+	mp_debug(3, "v->name[7]: %d; v->name[10]: %d\n", (int)v->name[7], (int)v->name[10]);
+	if (v->name[7] == 5) {
+		/* procperf table */
+		if (v->name[10] == PROCPERF_SUBIDX_RunPerfCPU) {
+			p->Perf.CPU = 1 + *v->val.integer;
+		} else if (v->name[10] == PROCPERF_SUBIDX_RunPerfMem) {
+			p->Perf.Mem = 1 + *v->val.integer;
+		}
+		return 0;
+	}
+	switch (v->name[10]) {
+	case PROCESS_SUBIDX_RunID:
+		p->ID = *v->val.integer;
+		break;
+	case PROCESS_SUBIDX_RunName:
+		p->Name = strndup(v->val.string, v->val_len);
+		break;
+	case PROCESS_SUBIDX_RunParameters:
+		p->Parameters = strndup(v->val.string, v->val_len);
+		break;
+	case PROCESS_SUBIDX_RunPath:
+		p->Path = strndup(v->val.string, v->val_len);
+		break;
+	case PROCESS_SUBIDX_RunStatus:
+		p->Status = *v->val.integer;
+		break;
+	}
+	return 0;
+}
+
+static void fetch_proc_info(mp_snmp_context *ctx)
+{
+	mp_snmp_walk(ctx, ".1.3.6.1.2.1.25.4", ".1.3.6.1.2.1.25.6", parse_snmp_var, NULL, NULL);
+}
+
+void print_usage(void)
+{
+	printf("check_snmp_procs -H <host> -C <community> (etc...)\n");
+	return 0;
 }
 
 int main(int argc, char **argv)
@@ -263,6 +330,9 @@ int main(int argc, char **argv)
 		{NULL, 0, 0, 0},
 	};
 
+	/* XXX REMOVE WHEN READY */
+	mp_verbosity = 3;
+
 	optary = calloc(1, 3 + (3 * ARRAY_SIZE(longopts)));
 	i = 0;
 	optary[i++] = '+';
@@ -289,6 +359,10 @@ int main(int argc, char **argv)
 	printf("optary: %s\n", optary);
 	mp_snmp_init("check_snmp_procs", 0);
 	ctx = mp_snmp_create_context();
+	if (!ctx)
+		die(STATE_UNKNOWN, _("Failed to create snmp context\n"));
+	if (!(all_procs = rbtree_create(proc_compare)))
+		die(STATE_UNKNOWN, _("Failed to create tree\n"));
 
 	while (1) {
 		c = getopt_long(argc, argv, optary, longopts, &option);
@@ -325,6 +399,7 @@ int main(int argc, char **argv)
 		die(STATE_UNKNOWN, _("Invalid state filter string: %s\n"), state_str);
 	}
 
+#if 0
 	bm = filter_processes(state_filter, name_filter, ereg_name_filter);
 	bm = bitmap_create(65536); /* 8kb. Will grow if pid > 65536 */
 	if (state_filter) {
@@ -332,6 +407,18 @@ int main(int argc, char **argv)
 	}
 	if (name_filter) {
 		filter_names(ctx, bm, name_filter);
+	}
+#endif
+
+	fetch_proc_info(ctx);
+	printf("Traversing %d nodes\n", rbtree_num_nodes(all_procs));
+	rbtree_traverse(all_procs, print_proc_info, NULL, rbinorder);
+	rbtree_destroy(all_procs, destroy_proc_info);
+	return 0;
+	if (1) {
+		p = query_process(ctx, 1);
+		print_proc_info(p, NULL);
+		destroy_proc_info(p);
 	}
 	procs = 0;
 	if (1) {
