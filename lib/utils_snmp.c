@@ -15,6 +15,7 @@ struct mp_snmp_context {
 	char *auth_pass;
 	char *priv_pass;
 	int error;
+	char *errstr;
 	netsnmp_session session;
 };
 
@@ -207,6 +208,22 @@ char *mp_snmp_value2str(netsnmp_variable_list *v, char *buf, size_t len)
 {
 	snprint_value(buf, len, v->name, v->name_length, v);
 	return buf;
+}
+
+static int mp_snmp_synch_response(mp_snmp_context *ctx, netsnmp_session *ss,
+		netsnmp_pdu *query, netsnmp_pdu **response)
+{
+	int ret;
+
+	ret = snmp_synch_response(ss, query, response);
+	if (ret != STAT_SUCCESS) {
+		snmp_error(ss, &ss->s_errno, &ss->s_snmp_errno, &ctx->errstr);
+		return -1;
+	} else if ((*response)->errstat != SNMP_ERR_NOERROR) {
+		ctx->errstr = strdup(snmp_errstring((*response)->errstat));
+		return -2;
+	}
+	return 0;
 }
 
 int mp_snmp_walk(mp_snmp_context *ctx, const char *base_oid, mp_snmp_walker func, void *arg, void *arg2)
