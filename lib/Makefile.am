@@ -8,6 +8,7 @@ AM_CPPFLAGS = -DNP_STATE_DIR_PREFIX=\"$(localstatedir)\" \
 	-I$(srcdir) -I$(top_srcdir)/gl -I$(top_srcdir)/intl -I$(top_srcdir)/plugins
 
 libmonitoringplug_a_SOURCES = \
+	rbtree.c \
 	bitmap.c \
 	utils_base.c \
 	utils_cmd.c \
@@ -15,6 +16,7 @@ libmonitoringplug_a_SOURCES = \
 	utils_disk.c \
 	utils_tcp.c
 EXTRA_DIST = \
+	rbtree.h \
 	bitmap.h \
 	utils_base.h \
 	utils_disk.h \
