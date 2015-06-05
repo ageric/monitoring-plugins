@@ -29,7 +29,7 @@ MATHLIBS = @MATHLIBS@
 libexec_PROGRAMS = check_apt check_cluster check_disk check_dummy check_http check_load \
 	check_mrtg check_mrtgtraf check_ntp check_ntp_peer check_nwstat check_overcr check_ping \
 	check_real check_smtp check_ssh check_tcp check_time check_ntp_time \
-	check_snmp_procs check_ups check_users negate \
+	check_snmp_procs check_snmp_memory check_ups check_users negate \
 	urlize @EXTRAS@
 
 check_tcp_programs = check_ftp check_imap check_nntp check_pop \
@@ -102,6 +102,7 @@ check_radius_LDADD = $(NETLIBS) $(RADIUSLIBS)
 check_real_LDADD = $(NETLIBS)
 check_snmp_LDADD = $(BASEOBJS)
 check_snmp_procs_LDADD = $(SNMPOBJS)
+check_snmp_memory_LDADD = $(SNMPOBJS)
 check_smtp_LDADD = $(SSLOBJS)
 check_ssh_LDADD = $(NETLIBS)
 check_swap_LDADD = $(MATHLIBS) $(BASEOBJS)
